@@ -12,9 +12,11 @@ def uv_to_sd(u, v, uK, vK):
     uK_rad = np.radians(uK)
     vK_rad = np.radians(vK)
 
+    #Longitude difference
     d_v = vK_rad - v_rad
-
+    #Catographic latitude
     s = np.arcsin(np.sin(uK_rad) * np.sin(u_rad) + np.cos(uK_rad) * np.cos(u_rad) * np.cos(d_v)) * 180 / np.pi
+    #Cartographic longtitude
     num = np.cos(u_rad) * np.sin(d_v)
     denom = np.cos(u_rad) * np.sin(uK_rad) * np.cos(d_v) - np.sin(u_rad) * np.cos(uK_rad)
     d = np.arctan2(num, denom) * 180 / np.pi
@@ -26,13 +28,15 @@ def continents(C, R, uk, vk, u0, proj):
     """Calculates coordinates for polygon geometry in a defined projection."""
     u = C[:, 0]
     v = C[:, 1]
-
+    #uv to sd
     s, d = uv_to_sd(u, v, uk, vk)
 
+    #finding and deleting singularities
     s_min = 5 * np.pi / 180
-    idxs = np.where(s < s_min)[0]
-    s = s[idxs]
-    d = d[idxs]
+    idx = np.where(s < s_min)[0]
+
+    s = s[idx]
+    d = d[idx]
 
     XC, YC = proj(R, s, d)
 
