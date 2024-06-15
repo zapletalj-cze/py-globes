@@ -36,36 +36,38 @@ class projections:
         return u, v
         
 
-    def graticule(u_min, u_max, v_min, v_max, D_u, D_v, d_u, d_v, R, uk, vk, u0, proj):
+    def graticule(u_min, u_max, v_min, v_max, D_u, D_v, d_u, d_v, R, uk, vk):
         XP, YP = [], []
+        # Define the rotation matrix for a -90-degree rotation
+        rotation_matrix = np.array([[0, 1],[-1, 0]])        
         for u in np.arange(u_min, u_max + D_u, D_u):
             vp = np.arange(v_min, v_max + d_v, d_v)
-            up = np.full(vp.shape, u) 
+            up = np.repeat(u, len(vp))
             sp, dp = projections.uv_to_sd(up, vp, uk, vk)
-            xp, yp = proj(R, sp, dp)
+            xp, yp = projections.gnom(R, sp, dp)
             XP.extend(xp)
             YP.extend(yp)
 
         XM, YM = [], []
         for v in np.arange(v_min, v_max + D_v, D_v):
             um = np.arange(u_min, u_max + d_u, d_u)
-            vm = np.full(um.shape, v)
+            vm = np.repeat(v, len(um))
             sm, dm = projections.uv_to_sd(um, vm, uk, vk)
-            xm, ym = proj(R, sm, dm)
+            xm, ym = projections.gnom(R, sm, dm)
             XM.extend(xm)
             YM.extend(ym)
+        # rotate
+        meridians = np.array([XM, YM])
+        parallels = np.array([XP, YP])
 
-        return XM, YM, XP, YP
+        meridians_rot = np.dot(rotation_matrix, meridians)
+        parallels_rot = np.dot(rotation_matrix, parallels)
+        XM_rot = meridians_rot[0]
+        YM_rot = meridians_rot[1]
+        XP_rot = parallels_rot[0]
+        YP_rot = parallels_rot[1]
+        return XM_rot, YM_rot, XP_rot, YP_rot
     
-
-    def boundary(u, v, R, uk, vk):
-        XB, YB = [], []
-        for u_v, v_v in zip(u, v):
-            s, d = projections.uv_to_sd(u_v, v_v, uk, vk)
-            XB_one, YB_one = projections.gnom(R, s, d)
-            XB.append(XB_one)
-            YB.append(YB_one)        
-        return XB, YB
     
     
     def boundary(u, v, R, uk, vk):
