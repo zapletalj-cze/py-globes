@@ -352,6 +352,6 @@ for k, v in faces.items():
         map.removeLayer(boundary_map)
     i +=1
 # pro_project.activeView.refresh()
-pro_project.saveACopy('test/globes_test.aprx')
+pro_project.saveACopy('project/globes_test.aprx')
 layout.exportToPDF("globe_faces.pdf")
 
