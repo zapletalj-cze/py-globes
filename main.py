@@ -10,7 +10,8 @@ from math import pi, sin, cos, tan
 from collections import namedtuple
 
 
-workspace = r"C:\Computation\CUNI\02_LS1\MATKARTO\testing_py_globes"
+# set the workspace to the same dir as script is located
+workspace = os.path.dirname(os.path.abspath(__file__))
 
 # DO NOT CHANGE
 arcpy.env.workspace = workspace
