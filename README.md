@@ -4,6 +4,7 @@ This script package addresses the creation of polyhedral globes in the form of a
 
 ## Contents
 - **main.ipynb**: Jupyter Notebook containing all tools for user interaction.
+- **main.py**: Converted set of Python blocks stored in Jupyter Notebook to Python file without markdowns
 - **tools.py**: Functions for creating datasets, defining projections, and composing layout (`projections` class), and composing layout (`layout` class)
 - **face_definitions.py**: Defines individual faces coordinates and other attributes.
 
