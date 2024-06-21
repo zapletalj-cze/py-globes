@@ -22,7 +22,7 @@ To run the script successfully, you need:
 2. **ArcGIS Pro and Package**: Ensure ArcGIS Pro version 3.3.0 is installed.
    
 3. **Running the Script**:
-   - Open `main.ipynb` in VCS/Jupyter Notebook.
+   - Open `main.ipynb` in VCS/Jupyter Notebook or `main.py` in any IDE
    - Execute each script as per the provided instructions.
    - The result will be a generated PDF of the polyhedral globe in A2 format.
 
