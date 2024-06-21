@@ -1,4 +1,3 @@
-# chunk 01
 import arcpy
 import numpy as np
 import os
@@ -7,12 +6,10 @@ import tools
 import face_definitions
 import sys
 from shapely.geometry import Polygon, Point, LineString
-import geopandas as gpd
 from math import pi, sin, cos, tan
 from collections import namedtuple
 
 
-# chunk 02
 workspace = r"C:\Computation\CUNI\02_LS1\MATKARTO\testing_py_globes"
 
 # DO NOT CHANGE
@@ -25,10 +22,9 @@ if not os.path.exists("processing"):
 if not os.path.exists("check"):
     os.mkdir("check")
 
-# chunk 03
 R = 6378000
 
-# chunk 04
+# set basemap
 # Mapnik_OSM, ESRI_Imagery, Esri_Shaded_Relief, Railway_Map
 basemap = 'Mapnik_OSM'
 
@@ -41,7 +37,6 @@ basemaps = {
             'Mapzen Global Terrain': 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'
             }
 
-# chunk 05
 # load data in shapefile or geojson
 data_shp = glob.glob(r"data/*.shp")
 data_json = glob.glob(r"data/*.geojson")
@@ -66,7 +61,6 @@ for map in maps:
 layout = pro_project.createLayout(594, 420, 'MILLIMETER')
 
 
-# chunk 06
 # pentagon shifters
 def shift_s(d):
     return sin(pi / 5) * d / tan(pi / 5)
@@ -87,7 +81,6 @@ def cir_rad(d):
     R = d / (2 * sin(pi / 5))
     return R
 
-# chunk 07
 # load faces
 faces = face_definitions.face_data
 # definision for northern hemisphere
