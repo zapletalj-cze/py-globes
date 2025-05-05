@@ -6,8 +6,31 @@ import pyproj
 from pyproj import Proj, transform
 import re
 import math
+from math import pi, sin, cos, tan
 
 
+
+class Shift:
+    # pentagon shifters
+    def shift_s(d):
+        return sin(pi / 5) * d / tan(pi / 5)
+
+    def shift_s2(d):
+        return sin(2*pi / 5) * d / tan(pi / 5)
+
+    def shift_c(d):
+        return cos(pi / 5) * d / tan(pi / 5)
+
+    def shift_c2(d):
+        return cos(2*pi / 5) * d / tan(pi / 5)
+
+    def shift_d(d):
+        return 2*(tan(0.3*pi) * (d / 2))
+
+    def cir_rad(d):
+        R = d / (2 * sin(pi / 5))
+        return R
+    
 
 class projections:
     def gnom(R, s, d):
@@ -200,7 +223,3 @@ class layout:
         # Create the polygon of the map frame boundary
         map_boundary = arcpy.Polygon(arcpy.Array(frame))
         return map_boundary
-
-
-   
-    
