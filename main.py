@@ -401,7 +401,7 @@ def main():
         return
     os.chdir(WORKSPACE_PATH)
     if not os.path.exists('processing'):
-     os.makedirs('processing')
+        os.makedirs('processing')
 
 
     pro_project = arcpy.mp.ArcGISProject(PROJECT_PATH)
