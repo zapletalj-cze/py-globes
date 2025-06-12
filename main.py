@@ -400,6 +400,9 @@ def main():
         print(f"Chyba: Pracovní adresář neexistuje: {WORKSPACE_PATH}")
         return
     os.chdir(WORKSPACE_PATH)
+    if not os.path.exists('processing'):
+     os.makedirs('processing')
+
 
     pro_project = arcpy.mp.ArcGISProject(PROJECT_PATH)
     for map_item in pro_project.listMaps():
