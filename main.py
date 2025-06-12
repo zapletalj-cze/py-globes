@@ -1,7 +1,11 @@
 """
 Skript tvoří  dvanáctistranný polyedrický glóbus složený z rovnostranných pětiúhelníků.
-Skript umožňuje nastavit měřítko globu
-Umožňuje vykreslit vektorová data jako jsou kontinenty, řeky a jezera, které mají definovanou symbologii a zdrojový sloupec pro popis"
+Parametry skriptu:
+ - měřítko
+ - offset od levého dolního okraje papíru
+ - podkladová mapa 
+ - poloměr Země
+ - vrstvy pro vizualizaci (defaultně řeky + labels, kontinenty + labels)
 Autor: Jakub Zapletal
 
 Created: 2024-05-26
