@@ -1,273 +1,649 @@
+"""
+Skript tvoří  dvanáctistranný polyedrický glóbus složený z rovnostranných pětiúhelníků.
+Skript umožňuje nastavit měřítko globu
+Umožňuje vykreslit vektorová data jako jsou kontinenty, řeky a jezera, které mají definovanou symbologii a zdrojový sloupec pro popis"
+Autor: Jakub Zapletal
+
+Created: 2024-05-26
+Last modified: 2025-06-12
+
+
+"""
+
 import arcpy
 import numpy as np
 import os
-import glob
-import tools
-import face_definitions
-import sys
-from shapely.geometry import Polygon, Point, LineString
-from math import pi, sin, cos, tan
+import re
+import math
 from collections import namedtuple
+import time
+from arcpy.cim import *
 
+# =============================================================================
+# 1. GLOBAL SETTINGS AND PARAMETERS
+# =============================================================================
+SCALE = 77000000
+GLOBAL_OFFSET_X_MM = 50
+GLOBAL_OFFSET_Y_MM = 70
+PROJECT_PATH = r"project\globes.aprx"
+WORKSPACE_PATH = os.path.dirname(os.path.abspath(__file__))
 
-# set the workspace to the same dir as script is located
-workspace = os.path.dirname(os.path.abspath(__file__))
-
-# DO NOT CHANGE
-arcpy.env.workspace = workspace
-arcpy.env.overwriteOutput = 1
-os.chdir(workspace)
-# create processing folder in workspace
-if not os.path.exists("processing"):
-    os.mkdir("processing")
-if not os.path.exists("check"):
-    os.mkdir("check")
-
-R = 6378000
-
-# set basemap
-# Mapnik_OSM, ESRI_Imagery, Esri_Shaded_Relief, Railway_Map
-basemap = 'Mapnik_OSM'
-
+OUTPUT_PDF_NAME = "globe_faces.pdf"
+continents_shp = r"data\_admin\continents\World_Continents.shp"
+waterways_shp = (
+    r"data\_physical\water\natural_earth_rivers\ne_110m_rivers_lake_centerlines.shp"
+)
+BASEMAP_NAME = "World_Shaded_Relief"
 basemaps = {
-            'Mapnik_OSM': 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            'ESRI_Imagery': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            'Esri_Shaded_Relief': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}',
-            'Railway_Map': 'http://sgx.geodatenzentrum.de/wmts_topplus_open/tile/1.0.0/web/default/WEBMERCATOR/{z}/{y}/{x}.png',
-            'Google Sattelite': 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-            'Mapzen Global Terrain': 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'
-            }
-
-# load data in shapefile or geojson
-data_shp = glob.glob(r"data/*.shp")
-data_json = glob.glob(r"data/*.geojson")
-data = data_shp + data_json
-print(f'Vector datasets found: {data}')
-side_len = 50
-cir_rad = (side_len / 2) * 1.618
-
-# Open ArcGIS Pro project
-project_path = r"project\globes.aprx"
-pro_project = arcpy.mp.ArcGISProject(project_path) # Creates a blank project
-
-# Remove all layouts from project
-for layout in pro_project.listLayouts():
-    layout.removeElement(layout)
-
-# remove all maps from project
-maps = pro_project.listMaps()  # Get a list of maps
-for map in maps: 
-    pro_project.deleteItem(map)  
-# create A3 layout
-layout = pro_project.createLayout(594, 420, 'MILLIMETER')
+    "Mapnik_OSM": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    "ESRI_Imagery": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    "World_Imagery": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    "World_Street_Map": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+    "World_Topo_Map": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+    "World_Shaded_Relief": "https://services.arcgisonline.com/arcgis/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}",
+    "None": None,
+}
+EARTH_RADIUS_M = 6378000
+ua = 26.5651
+ug = 52.6226
+ud = 10.8123
+BASE_SIDE_LENGTH = 60.0
 
 
-# pentagon shifters
-def shift_s(d):
-    return sin(pi / 5) * d / tan(pi / 5)
+# =============================================================================
+# 2. TOOLS AND FUNCTIONS
+# =============================================================================
+class PentagonShifts:
+    def __init__(self, d):
+        self.d = d
 
-def shift_s2(d):
-    return sin(2*pi / 5) * d / tan(pi / 5)
+    def shift_s(self):
+        return math.sin(math.pi / 5) * self.d / math.tan(math.pi / 5)
 
-def shift_c(d):
-    return cos(pi / 5) * d / tan(pi / 5)
+    def shift_s2(self):
+        return math.sin(2 * math.pi / 5) * self.d / math.tan(math.pi / 5)
 
-def shift_c2(d):
-    return cos(2*pi / 5) * d / tan(pi / 5)
+    def shift_c(self):
+        return math.cos(math.pi / 5) * self.d / math.tan(math.pi / 5)
 
-def shift_d(d):
-    return 2*(tan(0.3*pi) * (d / 2))
+    def shift_c2(self):
+        return math.cos(2 * math.pi / 5) * self.d / math.tan(math.pi / 5)
 
-def cir_rad(d):
-    R = d / (2 * sin(pi / 5))
-    return R
-
-# load faces
-faces = face_definitions.face_data
-# definision for northern hemisphere
-shift_x = [0, 
-            shift_s2(side_len),
-            shift_s(side_len),
-            -shift_s(side_len),
-            -shift_s2(side_len),
-            0, 
-            0, 
-            0, 
-            0, 
-            0, 
-            0, 
-            0]
-
-shift_y = [
-            -shift_d(side_len), 
-            -shift_c2(side_len), 
-            shift_c(side_len), 
-            shift_c(side_len), 
-            -shift_c2(side_len), 
-            0,
-            0, 
-            0, 
-            0, 
-            0, 
-            0, 
-            0]
-
-rotate = [0, 72, 144, -144, -72, 0, -72, -144, 144, 72, 0, 36]
-
-# center for N Africa
-val = faces['Face 1']
-pentagram = tools.layout.pent_create(a = side_len, angle = val[10])
-pentagram_shift = tools.layout.pent_move(pentagram, x_shift=val[8]+shift_x[0], y_shift=val[9]+shift_y[0]) # face 1
-ca_c = tools.layout.pent_center(pentagram_shift)
-ca_c_x, ca_c_y = ca_c[0], ca_c[1]
-
-print(f'Center_x : {ca_c_x}, center_y: {ca_c_y}')
-# update southern hemisphere
-Shift = namedtuple("Shift", ["x_value", "x_index", "y_value", "y_index"])
-shift_south = [
-    Shift(ca_c_x + shift_s(side_len), 5, ca_c_y - shift_c(side_len), 5),
-    Shift(ca_c_x + shift_s(side_len), 11, ca_c_y - shift_c(side_len)-shift_d(side_len), 11)
-]
-for shift in shift_south:
-    if 0 <= shift.x_index < len(shift_x):
-        shift_x[shift.x_index] = shift.x_value
-    if 0 <= shift.y_index < len(shift_y):
-        shift_y[shift.y_index] = shift.y_value
-
-# Set center to antlantida
-val = faces['Face 12']
-pentagram = tools.layout.pent_create(a = side_len, angle = val[10])
-pentagram_shift = tools.layout.pent_move(pentagram, x_shift=val[8]+shift_x[11], y_shift=val[9]+shift_y[11]) # face 1
-ca_c = tools.layout.pent_center(pentagram_shift)    
-ca_c_x, ca_c_y = ca_c[0], ca_c[1]
-# shift for southern hemisphere update
-Shift = namedtuple("Shift", ["x_value", "x_index", "y_value", "y_index"])
-shift_south = [
-    Shift(ca_c_x - shift_s(side_len), 8, ca_c_y - shift_c(side_len), 8),
-    Shift(ca_c_x + shift_s(side_len), 7, ca_c_y - shift_c(side_len), 7),
-    Shift(ca_c_x + shift_s2(side_len), 6, ca_c_y + shift_c2(side_len), 6),
-    Shift(ca_c_x - shift_s2(side_len), 9, ca_c_y + shift_c2(side_len), 9),
+    def shift_d(self):
+        return 2 * (math.tan(0.3 * math.pi) * (self.d / 2))
 
 
-]
-
-for shift in shift_south:
-    if 0 <= shift.x_index < len(shift_x):
-        shift_x[shift.x_index] = shift.x_value
-    if 0 <= shift.y_index < len(shift_y):
-        shift_y[shift.y_index] = shift.y_value
+def gnomonic_projection(R, s, d):
+    x = R * np.tan(np.pi / 2 - s) * np.cos(d)
+    y = R * np.tan(np.pi / 2 - s) * np.sin(d)
+    return x, y
 
 
-i = 0
-# iterrate over keys and values in faces
-for k, v in faces.items():
-    if i == 2 or i == 10 or i == 0 or i ==4 or i ==1 or i ==3 or i == 5 or i == 11 or i == 9 or i ==8 or i ==7 or i ==6:
-        print(f'WORKING ON :{k}')
-        # Create new map to project
-        map = pro_project.createMap(f"Map_{i+1}")
-        for lyr in map.listLayers(): 
-            map.removeLayer(lyr)
+def uv_to_sd(u, v, uk, vk):
+    dv = vk - v
+    s = np.arcsin(np.sin(u) * np.sin(uk) + np.cos(u) * np.cos(uk) * np.cos(dv))
+    d = -1 * np.arctan2(
+        np.cos(u) * np.sin(dv),
+        np.cos(u) * np.sin(uk) * np.cos(dv) - np.sin(u) * np.cos(uk),
+    )
+    return s, d
 
-        ## BOUNDARY
-        # create face's boundary
-        # convert degrees to radians
-        U_B = np.radians(v[0])
-        V_B = np.radians(v[1])
-        # uk = tools.projections.normalize_longitude(v[6])
-        # vk = tools.projections.normalize_latitude(v[7])
-        uk = v[6]
-        vk = v[7]
-        # create face's boundary
-        uk_rad = np.radians(v[6])
-        vk_rad = np.radians(v[7])
-        XB, YB = tools.projections.boundary(U_B, V_B, R=R, uk=uk_rad, vk=vk_rad)
-        point_array = arcpy.Array([arcpy.Point(x, y) for x, y in zip(XB, YB)])
-        print(f'Creating face: {k}, cartographic pole, u: {v[6]}, v: {v[7]}.')
-        # Combine X and Y into a list of tuples
-        boundary_coords = list(zip(XB, YB))
-        # Create a SpatialReference object from the WKT string
-        wkt = tools.projections.update_wkt_projection(new_lon=vk, new_lat=uk)
+
+def graticule(u_min, u_max, v_min, v_max, D_u, D_v, d_u, d_v, R, uk, vk):
+    XP, YP = [], []
+    rotation_matrix = np.array([[0, 1], [-1, 0]])
+
+    for u in np.arange(u_min, u_max + D_u, D_u):
+        vp = np.arange(v_min, v_max + d_v, d_v)
+        up = np.repeat(u, len(vp))
+        sp, dp = uv_to_sd(up, vp, uk, vk)
+        xp, yp = gnomonic_projection(R, sp, dp)
+        XP.extend(xp)
+        YP.extend(yp)
+
+    XM, YM = [], []
+    for v in np.arange(v_min, v_max + D_v, D_v):
+        um = np.arange(u_min, u_max + d_u, d_u)
+        vm = np.repeat(v, len(um))
+        sm, dm = uv_to_sd(um, vm, uk, vk)
+        xm, ym = gnomonic_projection(R, sm, dm)
+        XM.extend(xm)
+        YM.extend(ym)
+
+    meridians = np.array([XM, YM])
+    parallels = np.array([XP, YP])
+
+    meridians_rot = np.dot(rotation_matrix, meridians)
+    parallels_rot = np.dot(rotation_matrix, parallels)
+
+    XM_rot = meridians_rot[0]
+    YM_rot = meridians_rot[1]
+    XP_rot = parallels_rot[0]
+    YP_rot = parallels_rot[1]
+
+    return XM_rot, YM_rot, XP_rot, YP_rot
+
+
+def create_boundary_geometry(u_coords, v_coords, R, uk_rad, vk_rad):
+    u_rad, v_rad = np.radians(u_coords), np.radians(v_coords)
+    rotation_matrix = np.array([[0, 1], [-1, 0]])
+    s_coords, d_coords = uv_to_sd(u_rad, v_rad, uk_rad, vk_rad)
+    xb, yb = gnomonic_projection(R, s_coords, d_coords)
+    boundary_points = np.dot(rotation_matrix, np.array([xb, yb]))
+    return arcpy.Polygon(
+        arcpy.Array(
+            [arcpy.Point(x, y) for x, y in zip(boundary_points[0], boundary_points[1])]
+        )
+    )
+
+
+def update_wkt_projection(new_lon, new_lat):
+    wkt_string = """PROJCS["Gnomic",GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984", 6378137.0, 298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Gnomonic"],PARAMETER["False_Easting",0.0],PARAMETER["False_Northing",0.0],PARAMETER["Longitude_Of_Center",0.000],PARAMETER["Latitude_Of_Center",0.000],UNIT["Meter",1.0]]"""
+    wkt_string = re.sub(
+        r'PARAMETER\["Longitude_Of_Center",.*?\]',
+        f'PARAMETER["Longitude_Of_Center",{new_lon}]',
+        wkt_string,
+    )
+    wkt_string = re.sub(
+        r'PARAMETER\["Latitude_Of_Center",.*?\]',
+        f'PARAMETER["Latitude_Of_Center",{new_lat}]',
+        wkt_string,
+    )
+    return wkt_string
+
+
+def create_pentagon_frame(side_len, angle_rad, x_shift, y_shift):
+    R = side_len / (2 * math.sin(math.pi / 5))
+    points = [
+        arcpy.Point(
+            (R * math.cos(angle_rad + i * 2 * math.pi / 5)) + x_shift,
+            (R * math.sin(angle_rad + i * 2 * math.pi / 5)) + y_shift,
+        )
+        for i in range(5)
+    ]
+    points.append(points[0])
+    return arcpy.Polygon(arcpy.Array(points))
+
+
+# =============================================================================
+# 3. DEFINITION OF INDIVIDUAL FACES
+# =============================================================================
+
+FaceParams = namedtuple(
+    "FaceParams",
+    [
+        "u_coords",
+        "v_coords",
+        "u_min",
+        "u_max",
+        "v_min",
+        "v_max",
+        "pole_lat",
+        "pole_lon",
+        "base_layout_x",
+        "base_layout_y",
+        "pentagon_angle_rad",
+        "camera_heading",
+        "camera_x_shift",
+        "camera_y_shift",
+    ],
+)
+FACES = {
+    "Face 1": FaceParams(
+        [-ud, ud, ug, ug, ud, -ud],
+        [0, 36, 36, 324, 324, 0],
+        -20,
+        62,
+        -41,
+        41,
+        (ug + ud) / 2,
+        0,
+        150,
+        320,
+        19 * math.pi / 10,
+        0,
+        0,
+        0,
+    ),
+    "Face 2": FaceParams(
+        [-ud, ud, ug, ug, ud, -ud],
+        [72, 108, 108, 36, 36, 72],
+        -20,
+        62,
+        31,
+        112,
+        (ug + ud) / 2,
+        72,
+        150,
+        320,
+        19 * math.pi / 10,
+        72,
+        0,
+        0,
+    ),
+    "Face 3": FaceParams(
+        [-ud, ud, ug, ug, ud, -ud],
+        [144, 180, 180, 108, 108, 144],
+        -20,
+        62,
+        105,
+        185,
+        (ug + ud) / 2,
+        144,
+        150,
+        320,
+        27 * math.pi / 10,
+        144,
+        0,
+        0,
+    ),
+    "Face 4": FaceParams(
+        [-ud, ud, ug, ug, ud, -ud],
+        [216, 252, 252, 180, 180, 216],
+        -20,
+        62,
+        175,
+        260,
+        (ug + ud) / 2,
+        216,
+        150,
+        320,
+        19 * math.pi / 10,
+        -144,
+        0,
+        0,
+    ),
+    "Face 5": FaceParams(
+        [-ud, ud, ug, ug, ud, -ud],
+        [288, 324, 324, 252, 252, 288],
+        -20,
+        62,
+        240,
+        330,
+        (ug + ud) / 2,
+        288,
+        150,
+        320,
+        19 * math.pi / 10,
+        -72,
+        0,
+        0,
+    ),
+    "Face 6": FaceParams(
+        [-ug, -ug, -ud, ud, -ud, -ug],
+        [0, 72, 72, 36, 0, 0],
+        -62,
+        20,
+        -5,
+        77,
+        ((-ug) + ud) / 2,
+        36,
+        0,
+        0,
+        math.pi / 10,
+        0,
+        0,
+        0,
+    ),
+    "Face 7": FaceParams(
+        [-ug, -ug, -ud, ud, -ud, -ug],
+        [72, 144, 144, 108, 72, 72],
+        -62,
+        20,
+        65,
+        155,
+        ((-ug) + ud) / 2,
+        108,
+        0,
+        0,
+        math.pi / 10,
+        -72,
+        0,
+        0,
+    ),
+    "Face 8": FaceParams(
+        [-ug, -ug, -ud, ud, -ud, -ug],
+        [144, 216, 216, 180, 144, 144],
+        -62,
+        20,
+        140,
+        220,
+        ((-ug) + ud) / 2,
+        180,
+        0,
+        0,
+        math.pi / 10,
+        -144,
+        0,
+        0,
+    ),
+    "Face 9": FaceParams(
+        [-ug, -ug, -ud, ud, -ud, -ug],
+        [216, 288, 288, 252, 216, 216],
+        -62,
+        20,
+        210,
+        295,
+        ((-ug) + ud) / 2,
+        252,
+        0,
+        0,
+        math.pi / 10,
+        144,
+        0,
+        0,
+    ),
+    "Face 10": FaceParams(
+        [-ug, -ug, -ud, ud, -ud, -ug],
+        [288, 360, 360, 324, 288, 288],
+        -62,
+        20,
+        -75,
+        5,
+        ((-ug) + ud) / 2,
+        324,
+        0,
+        0,
+        math.pi / 10,
+        72,
+        0,
+        0,
+    ),
+    "Face 11": FaceParams(
+        [ug, ug, ug, ug, ug, ug],
+        [36, 108, 180, 252, 324, 36],
+        38,
+        90,
+        -180,
+        180,
+        90,
+        0,
+        150,
+        320,
+        math.pi / 10,
+        0,
+        0,
+        0,
+    ),
+    "Face 12": FaceParams(
+        [-ug, -ug, -ug, -ug, -ug, -ug],
+        [0, 72, 144, 216, 288, 0],
+        -90,
+        -38,
+        -180,
+        180,
+        -90,
+        0,
+        0,
+        0,
+        19 * math.pi / 10,
+        36,
+        0,
+        0,
+    ),
+}
+
+
+# =============================================================================
+# 4. MAIN
+# =============================================================================
+
+
+def main():
+    print("Spouštím generování glóbu...")
+    arcpy.env.overwriteOutput = True
+    if not os.path.exists(WORKSPACE_PATH):
+        print(f"Chyba: Pracovní adresář neexistuje: {WORKSPACE_PATH}")
+        return
+    os.chdir(WORKSPACE_PATH)
+
+    pro_project = arcpy.mp.ArcGISProject(PROJECT_PATH)
+    for map_item in pro_project.listMaps():
+        pro_project.deleteItem(map_item)
+    for layout_item in pro_project.listLayouts():
+        pro_project.deleteItem(layout_item)
+    layout = pro_project.createLayout(420, 594, "MILLIMETER", "A2_Layout_Globe")
+    print("Projekt a layout připraveny.")
+
+    Shifts = PentagonShifts(BASE_SIDE_LENGTH)
+    shift_x = [
+        0,
+        Shifts.shift_s2(),
+        Shifts.shift_s(),
+        -Shifts.shift_s(),
+        -Shifts.shift_s2(),
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ]
+    shift_y = [
+        -Shifts.shift_d(),
+        -Shifts.shift_c2(),
+        Shifts.shift_c(),
+        Shifts.shift_c(),
+        -Shifts.shift_c2(),
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ]
+
+    f1_params = FACES["Face 1"]
+    center_x1 = f1_params.base_layout_x + shift_x[0]
+    center_y1 = f1_params.base_layout_y + shift_y[0]
+    shift_x[5] = center_x1 + Shifts.shift_s()
+    shift_y[5] = center_y1 - Shifts.shift_c()
+    shift_x[11] = center_x1 + Shifts.shift_s()
+    shift_y[11] = center_y1 - Shifts.shift_c() - Shifts.shift_d()
+
+    f12_params = FACES["Face 12"]
+    center_x12 = f12_params.base_layout_x + shift_x[11]
+    center_y12 = f12_params.base_layout_y + shift_y[11]
+    shift_x[8] = center_x12 - Shifts.shift_s()
+    shift_y[8] = center_y12 - Shifts.shift_c()
+    shift_x[7] = center_x12 + Shifts.shift_s()
+    shift_y[7] = center_y12 - Shifts.shift_c()
+    shift_x[6] = center_x12 + Shifts.shift_s2()
+    shift_y[6] = center_y12 + Shifts.shift_c2()
+    shift_x[9] = center_x12 - Shifts.shift_s2()
+    shift_y[9] = center_y12 + Shifts.shift_c2()
+
+    continents_map = arcpy.management.MakeFeatureLayer(
+        continents_shp, "continents_map"
+    )[0]
+    waterways_map = arcpy.management.MakeFeatureLayer(waterways_shp, "waterways_map")[0]
+
+    continents_map_labels = None
+    continents_shp_labels = continents_shp.replace(".shp", "_lab.shp")
+    if os.path.exists(continents_shp_labels):
+        continents_map_labels = arcpy.management.MakeFeatureLayer(
+            continents_shp_labels, "continents_labels"
+        )[0]
+
+    symb_continents = continents_map.symbology
+    if hasattr(symb_continents, "renderer"):
+        symbol = symb_continents.renderer.symbol
+        symbol.color = {"RGB": [128, 128, 128, 51]}
+        symbol.outlineColor = {"RGB": [255, 255, 255, 255]}
+        symbol.outlineWidth = 1
+        continents_map.symbology = symb_continents
+    if continents_map.supports("SHOWLABELS"):
+        continents_map.showLabels = False
+        l_cim_cont = continents_map.getDefinition("V2")
+        for lc in l_cim_cont.labelClasses:
+            lc.useMaplexEngine = True
+            lc.expression = "$feature.CONTINENT"
+            lc.maplexLabelPlacementProperties.rotationProperties.rotationExpressionInfo = arcpy.cim.CreateCIMObjectFromClassName(
+                "CIMExpressionInfo", "V2"
+            )
+            lc.maplexLabelPlacementProperties.rotationProperties.rotationExpressionInfo.expression = (
+                "90"
+            )
+            lc.maplexLabelPlacementProperties.rotationProperties.alignLabelToAngle = (
+                False
+            )
+            lc.maplexLabelPlacementProperties.rotationProperties.rotationType = (
+                "Arithmetic"
+            )
+            lc.maplexLabelPlacementProperties.rotationProperties.enable = True
+            font_color = arcpy.cim.CreateCIMObjectFromClassName("CIMRGBColor", "V2")
+            font_color.values = [0, 0, 0, 255]
+            lc.textSymbol.symbol.color = font_color
+            halo_color = arcpy.cim.CreateCIMObjectFromClassName("CIMRGBColor", "V2")
+            halo_color.values = [255, 255, 255, 255]
+            halo_fill = arcpy.cim.CreateCIMObjectFromClassName("CIMSolidFill", "V2")
+            halo_fill.color = halo_color
+            halo_symbol = arcpy.cim.CreateCIMObjectFromClassName(
+                "CIMPolygonSymbol", "V2"
+            )
+            halo_symbol.symbolLayers = [halo_fill]
+
+            lc.textSymbol.symbol.haloSize = 1.5
+            lc.textSymbol.symbol.haloSymbol = halo_symbol
+        continents_map.setDefinition(l_cim_cont)
+
+        pro_project.save()
+
+    symb_water = waterways_map.symbology
+    if hasattr(symb_water, "renderer"):
+        symb_water.renderer.symbol.color = {"RGB": [0, 0, 255, 255]}
+        symb_water.renderer.symbol.width = 1
+        waterways_map.symbology = symb_water
+    if waterways_map.supports("SHOWLABELS"):
+        waterways_map.showLabels = True
+        l_cim = waterways_map.getDefinition("V2")
+        for lc in l_cim.labelClasses:
+            lc.expression = "$feature.name"
+            font_color = arcpy.cim.CreateCIMObjectFromClassName("CIMRGBColor", "V2")
+            font_color.values = (255, 105, 180, 255)
+            lc.textSymbol.symbol.color = font_color
+            halo_color = arcpy.cim.CreateCIMObjectFromClassName("CIMRGBColor", "V2")
+            halo_color.values = [173, 216, 230, 100]
+            halo_fill = arcpy.cim.CreateCIMObjectFromClassName("CIMSolidFill", "V2")
+            halo_fill.color = halo_color
+            halo_symbol = arcpy.cim.CreateCIMObjectFromClassName(
+                "CIMPolygonSymbol", "V2"
+            )
+            halo_symbol.symbolLayers = [halo_fill]
+            lc.textSymbol.symbol.haloSize = 1
+            lc.textSymbol.symbol.haloSymbol = halo_symbol
+        waterways_map.setDefinition(l_cim)
+
+    if continents_map_labels:
+        symb_labels = continents_map_labels.symbology
+        if hasattr(symb_labels, "renderer"):
+            symbol = symb_labels.renderer.symbol
+            symbol.color = {"RGB": [255, 255, 255, 0]}
+            symbol.width = 0.0
+            continents_map_labels.symbology = symb_labels
+
+        if continents_map_labels.supports("SHOWLABELS"):
+            continents_map_labels.showLabels = True
+            l_cim_cont = continents_map_labels.getDefinition("V2")
+            for lc_cont in l_cim_cont.labelClasses:
+                lc_cont.expression = "$feature.CONTINENT"
+                font_color = arcpy.cim.CreateCIMObjectFromClassName("CIMRGBColor", "V2")
+                font_color.values = (0, 0, 0, 255)
+                lc_cont.textSymbol.symbol.color = font_color
+                halo_color = arcpy.cim.CreateCIMObjectFromClassName("CIMRGBColor", "V2")
+                halo_color.values = [255, 255, 255, 255]
+                halo_fill = arcpy.cim.CreateCIMObjectFromClassName("CIMSolidFill", "V2")
+                halo_fill.color = halo_color
+                halo_symbol = arcpy.cim.CreateCIMObjectFromClassName(
+                    "CIMPolygonSymbol", "V2"
+                )
+                halo_symbol.symbolLayers = [halo_fill]
+                lc_cont.textSymbol.symbol.haloSize = 1
+                lc_cont.textSymbol.symbol.haloSymbol = halo_symbol
+            continents_map_labels.setDefinition(l_cim_cont)
+
+    in_memory_fcs_to_delete = []
+
+    for i, (face_name, params) in enumerate(FACES.items()):
+        print(f"--- Zpracovávám: {face_name} ({i+1}/{len(FACES)}) ---")
+
+        map_obj = pro_project.createMap(f"Map_{face_name.replace(' ', '_')}")
+        wkt = update_wkt_projection(new_lon=params.pole_lon, new_lat=params.pole_lat)
         sr = arcpy.SpatialReference(text=wkt)
-        # define map spatial reference
-        map.spatialReference = sr
+        map_obj.spatialReference = sr
 
-        # Convert geodataframe to shapefile and apply projection from wkt
-        boundary_poly = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in boundary_coords]))
-        centroid_geometry = boundary_poly.centroid
-        boundary_ap = arcpy.management.CreateFeatureclass(out_path="in_memory", out_name="boundary", geometry_type="POLYGON", spatial_reference=sr)
-        desc = arcpy.Describe(boundary_ap)
-        with arcpy.da.InsertCursor(boundary_ap, ["SHAPE@"]) as cursor:
-            cursor.insertRow([boundary_poly])
-        boundary_layer = arcpy.management.MakeFeatureLayer(boundary_ap, "boundary_layer")[0]
+        uk_rad, vk_rad = math.radians(params.pole_lat), math.radians(params.pole_lon)
+        boundary_geom = create_boundary_geometry(
+            params.u_coords, params.v_coords, EARTH_RADIUS_M, uk_rad, vk_rad
+        )
 
-        # save boundary layer to temp 
-        boundary_layer_path = os.path.join("processing", f"boundary_face_{i}.shp")
-        arcpy.management.CopyFeatures(boundary_layer, boundary_layer_path)
-        boundary_map = arcpy.management.MakeFeatureLayer(boundary_layer_path, "boundary_map")[0]
-        desc = arcpy.Describe(boundary_map)
+        XM, YM, XP, YP = graticule(
+            u_min=np.radians(params.u_min),
+            u_max=np.radians(params.u_max),
+            v_min=np.radians(params.v_min),
+            v_max=np.radians(params.v_max),
+            D_u=np.radians(10),
+            D_v=np.radians(10),
+            d_u=np.radians(1),
+            d_v=np.radians(1),
+            R=EARTH_RADIUS_M,
+            uk=uk_rad,
+            vk=vk_rad,
+        )
 
-        # MERIDIANS-PARALELS
-        XM, YM, XP, YP = tools.projections.graticule(
-                                                    u_min=v[2]*pi/180,
-                                                    u_max=v[3]*pi/180,
-                                                    v_min=v[4]*pi/180,
-                                                    v_max=v[5]*pi/180,
-                                                    D_u=np.radians(10),
-                                                    D_v=np.radians(10),
-                                                    d_u=np.radians(1),
-                                                    d_v=np.radians(1), 
-                                                    R=R, 
-                                                    uk=uk_rad,
-                                                    vk=vk_rad
-                                                    )
         meridians_points = []
         parallels_points = []
         for x, y in zip(XM, YM):
             point = arcpy.Point(x, y)
             meridians_points.append(point)
-        # Create an Array object from the Point objects
         meridians_array = arcpy.Array(meridians_points)
-
-        for x,y in zip(XP, YP):
+        for x, y in zip(XP, YP):
             point = arcpy.Point(x, y)
             parallels_points.append(point)
-        # Create an Array object from the Point objects
         parallels_array = arcpy.Array(parallels_points)
 
-        # Create a Polyline object from the Array objects
         meridians_polyline = arcpy.Polyline(meridians_array)
         parallels_polyline = arcpy.Polyline(parallels_array)
-        arcpy.management.CopyFeatures(meridians_polyline, "in_memory/meridians_not_split")
-        arcpy.management.CopyFeatures(parallels_polyline, "in_memory/parallels_not_split")
-        # Split lines
-        arcpy.management.SplitLine("in_memory/meridians_not_split", "in_memory/meridians_split")
-        arcpy.management.SplitLine("in_memory/parallels_not_split", "in_memory/parallels_split")
-        # Delete temporary not-split features
+        arcpy.management.CopyFeatures(
+            meridians_polyline, "in_memory/meridians_not_split"
+        )
+        arcpy.management.CopyFeatures(
+            parallels_polyline, "in_memory/parallels_not_split"
+        )
+        arcpy.management.SplitLine(
+            "in_memory/meridians_not_split", "in_memory/meridians_split"
+        )
+        arcpy.management.SplitLine(
+            "in_memory/parallels_not_split", "in_memory/parallels_split"
+        )
         arcpy.management.Delete("in_memory/meridians_not_split")
         arcpy.management.Delete("in_memory/parallels_not_split")
-  
-        # Remove lines longer than threshold using cursors
-        fields = ['OID@', 'Shape_Length']
-        with arcpy.da.UpdateCursor("in_memory/parallels_split", ["OID@", "SHAPE@"]) as cursor:
-            for row in cursor:
-                length = row[1].length
-                if length > 5000000:
-                    cursor.deleteRow() 
 
-        with arcpy.da.UpdateCursor("in_memory/meridians_split", ["OID@", "SHAPE@"]) as cursor:
+        fields = ["OID@", "Shape_Length"]
+        with arcpy.da.UpdateCursor(
+            "in_memory/parallels_split", ["OID@", "SHAPE@"]
+        ) as cursor:
             for row in cursor:
                 length = row[1].length
                 if length > 5000000:
                     cursor.deleteRow()
-    
-        # create feature classes and set spatial reference
+
+        with arcpy.da.UpdateCursor(
+            "in_memory/meridians_split", ["OID@", "SHAPE@"]
+        ) as cursor:
+            for row in cursor:
+                length = row[1].length
+                if length > 5000000:
+                    cursor.deleteRow()
+
         parallels_ap = arcpy.management.CreateFeatureclass(
-                out_path="in_memory",
-                out_name="parallels_ap",
-                geometry_type="POLYLINE",
-                spatial_reference=sr
-                )  
-        # append features to parallels_ap
+            out_path="in_memory",
+            out_name="parallels_ap",
+            geometry_type="POLYLINE",
+            spatial_reference=sr,
+        )
         with arcpy.da.InsertCursor(parallels_ap, ["SHAPE@"]) as cursor:
             for row in arcpy.da.SearchCursor("in_memory/parallels_split", ["SHAPE@"]):
                 try:
@@ -275,83 +651,118 @@ for k, v in faces.items():
                 except:
                     print("Error inserting row.")
         meridians_ap = arcpy.management.CreateFeatureclass(
-                out_path="in_memory",
-                out_name="meridians_ap",
-                geometry_type="POLYLINE",
-                spatial_reference=sr
-                )
-        
+            out_path="in_memory",
+            out_name="meridians_ap",
+            geometry_type="POLYLINE",
+            spatial_reference=sr,
+        )
+
         arcpy.management.AddField("in_memory/parallels_split", "Shape_Length", "DOUBLE")
-        arcpy.management.CalculateField("in_memory/parallels_split", "Shape_Length", "!shape.length!", "PYTHON3")
+        arcpy.management.CalculateField(
+            "in_memory/parallels_split", "Shape_Length", "!shape.length!", "PYTHON3"
+        )
         arcpy.management.AddField("in_memory/meridians_split", "Shape_Length", "DOUBLE")
-        arcpy.management.CalculateField("in_memory/meridians_split", "Shape_Length", "!shape.length!", "PYTHON3")
-        
-        # append features to meridians_ap
+        arcpy.management.CalculateField(
+            "in_memory/meridians_split", "Shape_Length", "!shape.length!", "PYTHON3"
+        )
+
         with arcpy.da.InsertCursor(meridians_ap, ["SHAPE@"]) as cursor:
             for row in arcpy.da.SearchCursor("in_memory/meridians_split", ["SHAPE@"]):
                 try:
                     cursor.insertRow(row)
                 except:
                     print("Error inserting row.")
-        meridians_layer = arcpy.management.MakeFeatureLayer(meridians_ap, "meridians_layer")[0]
+        meridians_layer = arcpy.management.MakeFeatureLayer(
+            meridians_ap, "meridians_layer"
+        )[0]
         meridians_layer_path = os.path.join("processing", f"meridians_face_no{i}.shp")
         arcpy.management.CopyFeatures(meridians_layer, meridians_layer_path)
-        meridians_map = arcpy.management.MakeFeatureLayer(meridians_layer_path, "meridians_map")[0]
+        meridians_map = arcpy.management.MakeFeatureLayer(
+            meridians_layer_path, "meridians_map"
+        )[0]
 
-        parallels_layer = arcpy.management.MakeFeatureLayer(parallels_ap, "parallels_layer")[0]
+        parallels_layer = arcpy.management.MakeFeatureLayer(
+            parallels_ap, "parallels_layer"
+        )[0]
         parallels_layer_path = os.path.join("processing", f"parallels_face_no{i}.shp")
         arcpy.management.CopyFeatures(parallels_layer, parallels_layer_path)
-        parallels_map = arcpy.management.MakeFeatureLayer(parallels_layer_path, "parallels_map")[0]
+        parallels_map = arcpy.management.MakeFeatureLayer(
+            parallels_layer_path, "parallels_map"
+        )[0]
 
+        symb_meridians = meridians_map.symbology
+        if hasattr(symb_meridians, "renderer"):
+            line_symbol = symb_meridians.renderer.symbol
+            line_symbol.color = {"RGB": [128, 128, 128, 50]}
+            line_symbol.width = 0.5
+            symb_meridians.renderer.symbol = line_symbol
+            meridians_map.symbology = symb_meridians
 
-        # MAPS       
-        # 1. layers to map
-        map.rotation = 60  # Nastavení rotace mapy na 60 stupňů
-        map.addLayer(boundary_map)
-        map.addLayer(parallels_map)
-        map.addLayer(meridians_map)
-        map.addDataFromPath(data_path=str(basemaps[basemap]), web_service_type="AUTOMATIC")
-        boundary_layer = map.listLayers("boundary_map")[0]
-        meridian_layer = map.listLayers("meridians_map")[0]
-        parallels_layer = map.listLayers("parallels_map")[0]
+        symb_parallels = parallels_map.symbology
+        if hasattr(symb_parallels, "renderer"):
+            line_symbol = symb_parallels.renderer.symbol
+            line_symbol.color = {"RGB": [128, 128, 128, 50]}
+            line_symbol.width = 0.5
+            symb_parallels.renderer.symbol = line_symbol
+            parallels_map.symbology = symb_parallels
 
-        # set symbology
-        symb_bounds = boundary_layer.symbology
-        symb_bounds.renderer.symbol.color = {'RGB': [40, 40, 175, 0]}
-        symb_bounds.renderer.symbol.width = 0.0
-        boundary_layer.symbology = symb_bounds
+        map_obj.addLayer(waterways_map)
+        map_obj.addLayer(continents_map)
+        if continents_map_labels:
+            map_obj.addLayer(continents_map_labels)
+        map_obj.addLayer(parallels_map)
+        map_obj.addLayer(meridians_map)
+        for lyr in map_obj.listLayers():
+            if lyr.name == "Topographic":
+                map_obj.removeLayer(lyr)
+                break
 
-        symb_meridians = meridian_layer.symbology
-        symb_meridians.renderer.symbol.color = {'RGB': [0, 0, 0, 255]}
-        symb_meridians.renderer.symbol.width = 0.1
-        meridian_layer.symbology = symb_meridians
-        parallels_layer.symbology = symb_meridians
-        
-        #2. pentagon
-        # packing_north hemisphere
-        pentagon = tools.layout.pent_create(a = side_len, angle = v[10])
-        pentagon_shift = tools.layout.pent_move(pentagon, x_shift=v[8]+shift_x[i], y_shift=v[9]+shift_y[i])
-        pent_center = tools.layout.pent_center(pentagon_shift)
-        # print(f'{k} has center at {pent_center}')
-        frame = tools.layout.frame_points(pentagon_shift)
-        
-        # 3. map to frame
-        extent = desc.extent
-        projected_extent = extent.projectAs(sr)
-        map_frame = layout.createMapFrame(frame, map)
-        map_frame.map = map
-        # map_frame.map.addLayer(tile_layer, "BOTTOM")
-        # map_frame.map.rotation = 60
-        map_frame.map.spatialReference = sr
+        if basemaps[BASEMAP_NAME] is not None:
+            map_obj.addDataFromPath(
+                data_path=str(basemaps[BASEMAP_NAME]), web_service_type="AUTOMATIC"
+            )
+        layout_x_final = params.base_layout_x + shift_x[i]
+        layout_y_final = params.base_layout_y + shift_y[i]
+        SCALE_FACTOR = SCALE / 77000000
+        layout_x_scaled = (layout_x_final * SCALE_FACTOR) + GLOBAL_OFFSET_X_MM
+        layout_y_scaled = (layout_y_final * SCALE_FACTOR) + GLOBAL_OFFSET_Y_MM
+        side_length_scaled = BASE_SIDE_LENGTH * SCALE_FACTOR
+
+        pentagon_frame_geom = create_pentagon_frame(
+            side_length_scaled,
+            params.pentagon_angle_rad,
+            layout_x_scaled,
+            layout_y_scaled,
+        )
+        map_frame = layout.createMapFrame(pentagon_frame_geom, map_obj)
+        map_frame.name = f"MapFrame_{face_name.replace(' ', '_')}"
+
+        extent = boundary_geom.extent
         map_frame.camera.setExtent(extent)
-        map_frame.camera.heading = rotate[i]
-        x_center = centroid_geometry.X
-        y_center = centroid_geometry.Y
-        map_frame.camera.X = x_center + face_definitions.shifts_x[i]*1000
-        map_frame.camera.Y = y_center + face_definitions.shifts_y[i]*1000
-        map.removeLayer(boundary_map)
-    i +=1
-# pro_project.activeView.refresh()
-pro_project.saveACopy('project/globes_test.aprx')
-layout.exportToPDF("globe_faces.pdf")
+        map_frame.camera.heading = params.camera_heading
+        map_frame.camera.X += params.camera_x_shift * SCALE_FACTOR
+        map_frame.camera.Y += params.camera_y_shift * SCALE_FACTOR
 
+    last_map_name = f"Map_{list(FACES.keys())[-1].replace(' ', '_')}"
+    last_map = pro_project.listMaps(last_map_name)[0]
+    for lyr in last_map.listLayers():
+        print(f"{lyr.name}, IsVisible: {lyr.visible}")
+    print("\nČekám 5 sekund, aby se vykreslily všechny vrstvy v mapě")
+    time.sleep(5)
+
+    output_path = os.path.join(WORKSPACE_PATH, OUTPUT_PDF_NAME)
+    print(f"\nGenerování dokončeno. Exportuji do PDF: {output_path}")
+    layout.exportToPDF(output_path)
+    pro_project.save()
+
+    for fc in in_memory_fcs_to_delete:
+        try:
+            arcpy.management.Delete(fc)
+        except Exception as e:
+            print(f"Chyba: {e}")
+
+    print("Hotovo!")
+
+
+if __name__ == "__main__":
+    main()
