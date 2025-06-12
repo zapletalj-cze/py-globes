@@ -1,0 +1,4 @@
+﻿aprx = arcpy.mp.ArcGISProject("CURRENT")
+lyt = aprx.listLayouts()[0]
+print("hello")
+dir(lyt)

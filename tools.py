@@ -9,45 +9,45 @@ import math
 from math import pi, sin, cos, tan
 
 
-
 class Shift:
     # pentagon shifters
     def shift_s(d):
         return sin(pi / 5) * d / tan(pi / 5)
 
     def shift_s2(d):
-        return sin(2*pi / 5) * d / tan(pi / 5)
+        return sin(2 * pi / 5) * d / tan(pi / 5)
 
     def shift_c(d):
         return cos(pi / 5) * d / tan(pi / 5)
 
     def shift_c2(d):
-        return cos(2*pi / 5) * d / tan(pi / 5)
+        return cos(2 * pi / 5) * d / tan(pi / 5)
 
     def shift_d(d):
-        return 2*(tan(0.3*pi) * (d / 2))
+        return 2 * (tan(0.3 * pi) * (d / 2))
 
     def cir_rad(d):
         R = d / (2 * sin(pi / 5))
         return R
-    
+
 
 class projections:
     def gnom(R, s, d):
-        x = R * np.tan(np.pi/2 - s) * np.cos(d)
-        y = R * np.tan(np.pi/2 - s) * np.sin(d)
+        x = R * np.tan(np.pi / 2 - s) * np.cos(d)
+        y = R * np.tan(np.pi / 2 - s) * np.sin(d)
         return x, y
-
 
     def uv_to_sd(u, v, uk, vk):
         # Longitude difference
-        dv = vk - v  
+        dv = vk - v
         # Transformed latitude
         s = np.arcsin(np.sin(u) * np.sin(uk) + np.cos(u) * np.cos(uk) * np.cos(dv))
         # Transformed longitude (with quadrant adjustment using atan2)
-        d = -1 * np.arctan2(np.cos(u) * np.sin(dv), np.cos(u) * np.sin(uk) * np.cos(dv) - np.sin(u) * np.cos(uk))
+        d = -1 * np.arctan2(
+            np.cos(u) * np.sin(dv),
+            np.cos(u) * np.sin(uk) * np.cos(dv) - np.sin(u) * np.cos(uk),
+        )
         return s, d
-
 
     def sd_to_uv(s, d, uk, vk):
         # Calculate longitude difference
@@ -57,12 +57,11 @@ class projections:
         # Calculate longitude
         v = vk - dv
         return u, v
-        
 
     def graticule(u_min, u_max, v_min, v_max, D_u, D_v, d_u, d_v, R, uk, vk):
         XP, YP = [], []
         # Define the rotation matrix for a -90-degree rotation
-        rotation_matrix = np.array([[0, 1],[-1, 0]])        
+        rotation_matrix = np.array([[0, 1], [-1, 0]])
         for u in np.arange(u_min, u_max + D_u, D_u):
             vp = np.arange(v_min, v_max + d_v, d_v)
             up = np.repeat(u, len(vp))
@@ -90,52 +89,48 @@ class projections:
         XP_rot = parallels_rot[0]
         YP_rot = parallels_rot[1]
         return XM_rot, YM_rot, XP_rot, YP_rot
-    
-    
-    
+
     def boundary(u, v, R, uk, vk):
         XB, YB = [], []
 
         # Define the rotation matrix for a -90-degree rotation
-        rotation_matrix = np.array([[0, 1],
-                                    [-1, 0]])
-        
+        rotation_matrix = np.array([[0, 1], [-1, 0]])
+
         for u_v, v_v in zip(u, v):
             s, d = projections.uv_to_sd(u_v, v_v, uk, vk)
             XB_one, YB_one = projections.gnom(R, s, d)
             XB.append(XB_one)
             YB.append(YB_one)
-        
+
         # Convert lists to numpy array for easier manipulation
         boundary_points = np.array([XB, YB])
-        
+
         # Apply the rotation matrix to the boundary points
         rotated_boundary_points = np.dot(rotation_matrix, boundary_points)
-        
+
         # Extract rotated X and Y coordinates
         rotated_X = rotated_boundary_points[0]
         rotated_Y = rotated_boundary_points[1]
-        
+
         return rotated_X, rotated_Y
-    
 
     def update_wkt_projection(new_lon, new_lat):
         """Updates latitude and longitude of the center in a WKT projection string."""
         wkt_string = """PROJCS["Gnomic",GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984", 6378137.0, 298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Gnomonic"],PARAMETER["False_Easting",0.0],PARAMETER["False_Northing",0.0],PARAMETER["Longitude_Of_Center",0.000],PARAMETER["Latitude_Of_Center",0.000],UNIT["Meter",1.0]]"""
-        # Update longitude 
+        # Update longitude
         update_wkt = re.sub(
             r'PARAMETER\["Longitude_Of_Center",.*?\]',
-            f'PARAMETER["Longitude_Of_Center",{new_lon}]', 
-            wkt_string
+            f'PARAMETER["Longitude_Of_Center",{new_lon}]',
+            wkt_string,
         )
         # Update latitude
         update_wkt = re.sub(
             r'PARAMETER\["Latitude_Of_Center",.*?\]',
             f'PARAMETER["Latitude_Of_Center",{new_lat}]',
-            update_wkt
+            update_wkt,
         )
         return update_wkt
-    
+
     def normalize_latitude(latitude):
         """
         Recalculates a latitude value to fit within the -90 to 90 degree range.
@@ -143,7 +138,7 @@ class projections:
         # Ensure latitude is within -180 to 180 range before normalization
         latitude = latitude % 180  # Normalize to 0-360 range
         while latitude > 180:
-            latitude = latitude -180
+            latitude = latitude - 180
         # Now, normalize to -90 to 90 range
         if -90 <= latitude <= 90:  # Already within range
             return latitude
@@ -156,7 +151,6 @@ class projections:
                 return 90 - offset
             else:  # Southern hemisphere
                 return -90 + offset
-
 
     def normalize_longitude(longitude):
         """
@@ -173,7 +167,7 @@ class projections:
 class layout:
     def pent_create(a, angle):
         """
-        Based on a length (a) and angle, create a list of regular pentagram vertices. 
+        Based on a length (a) and angle, create a list of regular pentagram vertices.
         The pentagram has its center at [0, 0].
         """
         R = a / (2 * math.sin(math.pi / 5))
@@ -186,26 +180,23 @@ class layout:
             points.append((x, y))
 
         return points
-    
+
     def pent_move(points, x_shift, y_shift):
         # move pentagram vertices by x and y
         points_moved = []
-        for (x, y) in points:
+        for x, y in points:
             points_moved.append((x + x_shift, y + y_shift))
         return points_moved
 
-    
     def pent_rotate(points, theta_0):
         # rotate pentagram vertices by angle
         rotated_points = []
-        for (x, y) in points:
+        for x, y in points:
             x_rot = x * math.cos(theta_0) - y * math.sin(theta_0)
             y_rot = x * math.cos(theta_0) + y * math.sin(theta_0)
             rotated_points.append((x_rot, y_rot))
         return rotated_points
-    
 
-    
     def pent_center(vertices):
         """
         Calculate the center (centroid) of a regular pentagon given its vertices.
@@ -214,7 +205,7 @@ class layout:
         center_x = sum(vertex[0] for vertex in vertices) / 5
         center_y = sum(vertex[1] for vertex in vertices) / 5
         return (center_x, center_y)
-    
+
     def frame_points(points):
         # Create an array of ArcPy Point objects from the list of points
         frame = [arcpy.Point(x, y) for x, y in points]
