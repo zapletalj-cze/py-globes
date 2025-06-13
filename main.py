@@ -1,17 +1,18 @@
 """
-Skript tvoří  dvanáctistranný polyedrický glóbus složený z rovnostranných pětiúhelníků.
-Parametry skriptu:
- - měřítko
- - offset od levého dolního okraje papíru
- - podkladová mapa 
- - poloměr Země
- - vrstvy pro vizualizaci (defaultně řeky + labels, kontinenty + labels)
-Autor: Jakub Zapletal
+Generates a twelve-sided polyhedral globe using equilateral pentagons.
+
+Parameters:
+- SCALE (float/int): Scale factor for the final layout.
+- GLOBAL_OFFSET_X_MM/GLOBAL_OFFSET_Y_MM (float/int): X and Y offset from the bottom-left corner of the paper. (in millimeters)
+- BASEMAP_NAME (str): Path or identifier for the base map data. (one of the listed basemaps)
+- EARTH_RADIUS_M (float/int): Radius of the Earth used for projection calculations.
+
+- layers: Hardcoded, including default symbology for rivers and continents.).
+
+By default, the visualization includes rivers and continent lines/boundaries with associated labels.
 
 Created: 2024-05-26
 Last modified: 2025-06-12
-
-
 """
 
 import arcpy
@@ -37,7 +38,7 @@ continents_shp = r"data\_admin\continents\World_Continents.shp"
 waterways_shp = (
     r"data\_physical\water\natural_earth_rivers\ne_110m_rivers_lake_centerlines.shp"
 )
-BASEMAP_NAME = "World_Shaded_Relief"
+BASEMAP_NAME = "ESRI_Imagery"
 basemaps = {
     "Mapnik_OSM": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
     "ESRI_Imagery": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -394,10 +395,10 @@ FACES = {
 
 
 def main():
-    print("Spouštím generování glóbu...")
+    print("Starting globe generation...")
     arcpy.env.overwriteOutput = True
     if not os.path.exists(WORKSPACE_PATH):
-        print(f"Chyba: Pracovní adresář neexistuje: {WORKSPACE_PATH}")
+        print(f"Error: Working directory does not exist: {WORKSPACE_PATH}")
         return
     os.chdir(WORKSPACE_PATH)
     if not os.path.exists('processing'):
@@ -410,7 +411,7 @@ def main():
     for layout_item in pro_project.listLayouts():
         pro_project.deleteItem(layout_item)
     layout = pro_project.createLayout(420, 594, "MILLIMETER", "A2_Layout_Globe")
-    print("Projekt a layout připraveny.")
+    print("Project and layout are ready.")
 
     Shifts = PentagonShifts(BASE_SIDE_LENGTH)
     shift_x = [
@@ -461,7 +462,7 @@ def main():
     shift_y[6] = center_y12 + Shifts.shift_c2()
     shift_x[9] = center_x12 - Shifts.shift_s2()
     shift_y[9] = center_y12 + Shifts.shift_c2()
-
+    print("Setting default symbology and labels for continents...")
     continents_map = arcpy.management.MakeFeatureLayer(
         continents_shp, "continents_map"
     )[0]
@@ -517,7 +518,7 @@ def main():
         continents_map.setDefinition(l_cim_cont)
 
         pro_project.save()
-
+    print("Setting default symbology and labels for waterways...")
     symb_water = waterways_map.symbology
     if hasattr(symb_water, "renderer"):
         symb_water.renderer.symbol.color = {"RGB": [0, 0, 255, 255]}
@@ -572,9 +573,12 @@ def main():
             continents_map_labels.setDefinition(l_cim_cont)
 
     in_memory_fcs_to_delete = []
+    if basemaps[BASEMAP_NAME] is not None:
+        print(f"Adding basemap: {BASEMAP_NAME}...")
+
 
     for i, (face_name, params) in enumerate(FACES.items()):
-        print(f"--- Zpracovávám: {face_name} ({i+1}/{len(FACES)}) ---")
+        print(f"--- Processing face: {face_name} ({i+1}/{len(FACES)}) ---")
 
         map_obj = pro_project.createMap(f"Map_{face_name.replace(' ', '_')}")
         wkt = update_wkt_projection(new_lon=params.pole_lon, new_lat=params.pole_lat)
@@ -754,11 +758,11 @@ def main():
     last_map = pro_project.listMaps(last_map_name)[0]
     for lyr in last_map.listLayers():
         print(f"{lyr.name}, IsVisible: {lyr.visible}")
-    print("\nČekám 5 sekund, aby se vykreslily všechny vrstvy v mapě")
+    print("\nWaiting 5 seconds to allow all map layers to render")
     time.sleep(5)
 
     output_path = os.path.join(WORKSPACE_PATH, OUTPUT_PDF_NAME)
-    print(f"\nGenerování dokončeno. Exportuji do PDF: {output_path}")
+    print(f"\nGeneration complete. Exporting to PDF: {output_path}")
     layout.exportToPDF(output_path)
     pro_project.save()
 
@@ -766,9 +770,10 @@ def main():
         try:
             arcpy.management.Delete(fc)
         except Exception as e:
-            print(f"Chyba: {e}")
+            print(f"Error: {e}")
+    print(f"PDF exported successfully to {output_path}")
 
-    print("Hotovo!")
+    print("Completed!")
 
 
 if __name__ == "__main__":
