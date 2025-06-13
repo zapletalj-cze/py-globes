@@ -4,7 +4,7 @@ This script package addresses the creation of polyhedral globes in the form of a
 
 ## Contents
 - **main.py**: Converted set of Python blocks to py script, contains all Classes for projection handling, converted from MatLab
-- 
+
 ## Requirements
 To run the script successfully, you need:
 
